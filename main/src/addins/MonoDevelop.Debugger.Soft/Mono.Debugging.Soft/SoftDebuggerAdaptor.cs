@@ -247,7 +247,7 @@ namespace Mono.Debugging.Soft
 						return cx.RuntimeInvoke (method, obj, new Value[0]);
 				}
 
-				if (fromType.IsGenericType && fromType.FullName.StartsWith ("System.Nullable`")) {
+				if (fromType.IsGenericType && fromType.FullName.StartsWith ("System.Nullable`1")) {
 					method = OverloadResolve (cx, "get_Value", fromType, new TypeMirror[0], true, false, false);
 					if (method != null) {
 						obj = cx.RuntimeInvoke (method, obj, new Value[0]);
@@ -361,6 +361,18 @@ namespace Mono.Debugging.Soft
 			return val;
 		}
 
+		public override bool NullableHasValue (EvaluationContext ctx, object type, object obj)
+		{
+			ValueReference hasValue = GetMember (ctx, type, obj, "has_value");
+
+			return (bool) hasValue.ObjectValue;
+		}
+
+		public override ValueReference NullableGetValue (EvaluationContext ctx, object type, object obj)
+		{
+			return GetMember (ctx, type, obj, "value");
+		}
+
 		public override object GetEnclosingType (EvaluationContext ctx)
 		{
 			SoftEvaluationContext cx = (SoftEvaluationContext) ctx;
@@ -381,7 +393,15 @@ namespace Mono.Debugging.Soft
 
 		public override ValueReference GetIndexerReference (EvaluationContext ctx, object target, object[] indices)
 		{
-			TypeMirror targetType = GetValueType (ctx, target) as TypeMirror;
+			object valueType = GetValueType (ctx, target);
+			TypeMirror targetType = null;
+
+			if (valueType is Type)
+				targetType = (TypeMirror) ForceLoadType (ctx, ((Type) valueType).FullName);
+			else if (valueType is TypeMirror)
+				targetType = (TypeMirror) valueType;
+			else
+				return null;
 			
 			Value[] values = new Value [indices.Length];
 			TypeMirror[] types = new TypeMirror [indices.Length];
@@ -1141,7 +1161,7 @@ namespace Mono.Debugging.Soft
 
 			MethodMirror cctor = OverloadResolve (ctx, ".cctor", tm, new TypeMirror[0], false, true, false);
 			if (cctor == null)
-				return false;
+				return true;
 
 			try {
 				tm.InvokeMethod (ctx.Thread, cctor, new Value[0], InvokeOptions.DisableBreakpoints | InvokeOptions.SingleThreaded);

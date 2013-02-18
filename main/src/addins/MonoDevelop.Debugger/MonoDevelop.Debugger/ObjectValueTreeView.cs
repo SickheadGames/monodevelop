@@ -871,6 +871,9 @@ namespace MonoDevelop.Debugger
 					return;
 				
 				int i = valueNames.IndexOf (exp);
+				if (i == -1)
+					return;
+
 				if (args.NewText.Length != 0)
 					valueNames [i] = args.NewText;
 				else
@@ -1032,25 +1035,36 @@ namespace MonoDevelop.Debugger
 			case Gdk.Key.Delete:
 			case Gdk.Key.KP_Delete:
 			case Gdk.Key.BackSpace:
-				TreePath path;
-				TreeViewColumn column;
-				TreeIter iter;
-				ObjectValue val;
-				string expression;
-				
-				// Get the expression and value at the cursor
-				GetCursor (out path, out column);
-				Model.GetIter (out iter, path);
-				val = (ObjectValue)store.GetValue (iter, ObjectCol);
-				expression = GetFullExpression (iter);
-				
-				// Lookup and remove
-				if (val != null && values.Contains (val)) {
-					RemoveValue (val);
-					return true;
-				} else if (!string.IsNullOrEmpty (expression) && valueNames.Contains (expression)) {
-					RemoveExpression (expression);
-					return true;
+				if (Selection.CountSelectedRows () > 0) {
+					List<TreeRowReference> selected = new List<TreeRowReference> ();
+					bool deleted = false;
+					string expression;
+					ObjectValue val;
+					TreeIter iter;
+
+					// get a list of the selected rows (in reverse order so that we delete children before parents)
+					foreach (var path in Selection.GetSelectedRows ())
+						selected.Insert (0, new TreeRowReference (Model, path));
+
+					foreach (var row in selected) {
+						if (!Model.GetIter (out iter, row.Path))
+							continue;
+
+						val = (ObjectValue)store.GetValue (iter, ObjectCol);
+						expression = GetFullExpression (iter);
+
+						// Lookup and remove
+						if (val != null && values.Contains (val)) {
+							RemoveValue (val);
+							deleted = true;
+						} else if (!string.IsNullOrEmpty (expression) && valueNames.Contains (expression)) {
+							RemoveExpression (expression);
+							deleted = true;
+						}
+					}
+
+					if (deleted)
+						return true;
 				}
 				break;
 			}
@@ -1133,21 +1147,57 @@ namespace MonoDevelop.Debugger
 			TreePath[] selected = Selection.GetSelectedRows ();
 			TreeIter iter;
 			
-			if (selected == null || selected.Length != 1)
-				return;
-			
-			if (!store.GetIter (out iter, selected[0]))
+			if (selected == null || selected.Length == 0)
 				return;
 
-			object focus = IdeApp.Workbench.RootWindow.Focus;
+			if (selected.Length == 1) {
+				object focus = IdeApp.Workbench.RootWindow.Focus;
 
-			if (focus is Gtk.Editable) {
-				((Gtk.Editable) focus).CopyClipboard ();
-				return;
+				if (focus is Gtk.Editable) {
+					((Gtk.Editable) focus).CopyClipboard ();
+					return;
+				}
 			}
-			
-			string value = (string) store.GetValue (iter, ValueCol);
-			Clipboard.Get (Gdk.Selection.Clipboard).Text = value;
+
+			var values = new List<string> ();
+			var names = new List<string> ();
+			var types = new List<string> ();
+			int maxValue = 0;
+			int maxName = 0;
+
+			for (int i = 0; i < selected.Length; i++) {
+				if (!store.GetIter (out iter, selected[i]))
+					continue;
+
+				string value = (string) store.GetValue (iter, ValueCol);
+				string name = (string) store.GetValue (iter, NameCol);
+				string type = (string) store.GetValue (iter, TypeCol);
+
+				maxValue = Math.Max (maxValue, value.Length);
+				maxName = Math.Max (maxName, name.Length);
+
+				values.Add (value);
+				names.Add (name);
+				types.Add (type);
+			}
+
+			var str = new StringBuilder ();
+			for (int i = 0; i < values.Count; i++) {
+				if (i > 0)
+					str.AppendLine ();
+
+				str.Append (names[i]);
+				if (names[i].Length < maxName)
+					str.Append (new string (' ', maxName - names[i].Length));
+				str.Append ('\t');
+				str.Append (values[i]);
+				if (values[i].Length < maxValue)
+					str.Append (new string (' ', maxValue - values[i].Length));
+				str.Append ('\t');
+				str.Append (types[i]);
+			}
+
+			Clipboard.Get (Gdk.Selection.Clipboard).Text = str.ToString ();
 		}
 		
 		[CommandHandler (EditCommands.Delete)]
